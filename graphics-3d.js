@@ -165,8 +165,12 @@ function createPupilLines(landmarks, canvasWidth, canvasHeight) {
     normalZ /= normalLength;
   }
 
-  // Calculate extension distance
-  const extensionDistance = 100;
+  // Calculate extension distance scaled by Z-component for consistent visual depth
+  // When face is straight on (normalZ high), we need more extension to be visible
+  // When face is turned (normalZ low), we need less extension
+  const baseExtension = 100;
+  const zScale = Math.max(0.3, Math.abs(normalZ)); // Prevent division by zero, minimum 0.3
+  const extensionDistance = baseExtension / zScale;
 
   // Extension points (along face normal - perpendicular to face)
   const leftExtX = leftPos.x + normalX * extensionDistance;
@@ -456,7 +460,10 @@ export function createGraphics3D(canvasElement) {
             normalZ /= normalLength;
           }
 
-          const extensionDistance = 100;
+          // Calculate extension distance scaled by Z-component for consistent visual depth
+          const baseExtension = 100;
+          const zScale = Math.max(0.3, Math.abs(normalZ));
+          const extensionDistance = baseExtension / zScale;
 
           // Extension points (along face normal - perpendicular to face)
           const leftExtX = leftPos.x + normalX * extensionDistance;
