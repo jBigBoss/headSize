@@ -2,6 +2,8 @@
 
 A modular, production-ready facial measurement application that uses MediaPipe for real-time face tracking and provides precise measurements of facial features including IPD, nose metrics, eye widths, and face dimensions.
 
+Demo [https://shameem4.github.io/headSize/]
+
 ## 🎯 Features
 
 ### Core Measurements
