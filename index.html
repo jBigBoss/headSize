@@ -1,106 +1,226 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>headSize</title>
-  <link rel="stylesheet" href="style.css" />
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-      }
-    }
-  </script>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>HeadSize — Browser Face Measurements</title>
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,Roboto,Arial}
+    #container{position:relative;max-width:960px;margin:0 auto}
+    video,canvas{width:100%;height:auto;display:block}
+    #controls{display:flex;gap:.5rem;padding:.5rem;flex-wrap:wrap;align-items:center}
+    button,input{padding:.5rem;border-radius:.4rem}
+    #metrics{padding:.5rem}
+    .small{font-size:.9rem;color:#444}
+    .overlay-point{position:absolute;width:10px;height:10px;background:rgba(0,200,0,.9);border-radius:50%}
+  </style>
 </head>
 <body>
-<div>
-  <a href=https://www.linkedin.com/pulse/measuring-human-face-privately-browser-shameem-hameed-51okc/>Article</a>
-</div>
-  <div class="app">
-    <!-- Left: camera window -->
-    <section id="demos" class="invisible">
-      <div id="liveView" class="videoView">
-        <div class="video-shell">
-          <video id="webcam" autoplay playsinline></video>
-          <canvas class="output_canvas" id="output_canvas" width="1280" height="720" style="position:absolute;left:0;top:0;"></canvas>
-          <canvas class="output_canvas_3d" id="output_canvas_3d" width="1280" height="720" style="position:absolute;left:0;top:0;display:none;"></canvas>
-          <!-- (Old in-canvas overlays removed) -->
-        </div>
-      </div>
-    </section>
-
-    <!-- Right: combined metrics + controls -->
-    <aside class="metrics-panel" id="metrics_panel">
-      <header class="metrics-header">
-        <!-- <h1 class="metrics-title">Measurements</h1> -->
-      </header>
-        <div class="metrics-controls">
-          <!-- <label class="control">
-            <span class="control-label">Detail</span>
-            <select id="detail_select">
-              <option value="minimal">Minimal</option>
-              <option value="standard">Standard</option>
-              <option value="full" selected>Full</option>
-            </select>
-          </label> -->
-          <!-- <label class="control">
-            <span class="control-label">Focus</span>
-            <select id="focus_select">
-              <option value="global" selected>Global</option>
-              <option value="face">Face</option>
-              <option value="eyes">Eyes</option>
-              <option value="nose">Nose</option>
-            </select>
-          </label>
-          <label class="control toggle">
-            <input type="checkbox" id="nose_overlay_toggle" />
-            <span>Illustrate Nose</span>
-          </label> -->
-          <fieldset class="control-group">
-            <!-- <legend class="control-label">Focus</legend> -->
-            <div class="radio-options">
-              <label><input type="radio" name="focus" value="global"> Global</label>
-              <label><input type="radio" name="focus" value="face" checked> Face</label>
-              <label><input type="radio" name="focus" value="eyes"> Eyes</label>
-              <label><input type="radio" name="focus" value="nose"> Nose</label>
-            </div>
-          </fieldset>
-
-          <fieldset class="control-group">
-            <legend class="control-label">View Mode</legend>
-            <div class="radio-options">
-              <label><input type="radio" name="renderMode" value="canvas2d" checked> 2D Overlay</label>
-              <label><input type="radio" name="renderMode" value="hybrid"> 3D Overlay</label>
-            </div>
-          </fieldset>
-
-          <div class="control-group" id="threejs_controls" style="display:none;">
-            <label class="control toggle">
-              <input type="checkbox" id="wireframe_toggle" />
-              <span>Wireframe</span>
-            </label>
-            <label class="control toggle">
-              <input type="checkbox" id="landmarks_toggle" checked />
-              <span>Landmarks</span>
-            </label>
-            <label class="control">
-              <span class="control-label">Opacity</span>
-              <input type="range" id="opacity_slider" min="0" max="100" />
-            </label>
-          </div>
-
-        </div>
-      
-
-      <div class="panel-body" id="metrics_panel_body">
-        <!-- Populated by main.js -->
-      </div>
-    </aside>
+  <div id="container">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="controls">
+      <button id="startBtn">Start camera</button>
+      <button id="calibrateBtn">Calibrate (tap two points)</button>
+      <input id="knownMm" placeholder="Known mm (e.g. 85.6)" style="width:120px" />
+      <button id="captureRefBtn">Reset Ref</button>
+      <label class="small">Flip: <input id="flip" type="checkbox" checked/></label>
+      <button id="toggleDraw">Toggle overlay</button>
+    </div>
+    <div id="metrics" class="small">
+      <div id="status">Status: idle</div>
+      <div id="measurements"></div>
+      <div id="note" class="small"></div>
+    </div>
   </div>
 
-  <script type="module" src="main.js"></script>
+  <!-- TFJS + face-landmarks-detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.min.js"></script>
+
+  <script>
+  (async ()=> {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+    const startBtn = document.getElementById('startBtn');
+    const calibrateBtn = document.getElementById('calibrateBtn');
+    const knownMmInput = document.getElementById('knownMm');
+    const captureRefBtn = document.getElementById('captureRefBtn');
+    const flipCheckbox = document.getElementById('flip');
+    const statusEl = document.getElementById('status');
+    const measurementsEl = document.getElementById('measurements');
+    const toggleDrawBtn = document.getElementById('toggleDraw');
+
+    let model = null;
+    let running = false;
+    let drawOverlay = true;
+    let refClicks = [];
+    let mmPerPixel = null;
+
+    // load the model (Mediapipe facemesh wrapper)
+    statusEl.textContent = 'Status: loading model...';
+    model = await faceLandmarksDetection.load(faceLandmarksDetection.SupportedPackages.mediapipeFacemesh);
+    statusEl.textContent = 'Status: model loaded. Press Start camera.';
+
+    function resizeCanvasToVideo() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+    }
+
+    async function startCamera(){
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+        resizeCanvasToVideo();
+        running = true;
+        statusEl.textContent = 'Status: running';
+        requestAnimationFrame(loop);
+      } catch (e) {
+        statusEl.textContent = 'Camera error: ' + e.message;
+      }
+    }
+
+    startBtn.onclick = startCamera;
+    toggleDrawBtn.onclick = ()=> drawOverlay = !drawOverlay;
+
+    // calibration flow: tap two points on canvas to set pixel length, then enter real mm in input
+    calibrateBtn.onclick = ()=> {
+      statusEl.textContent = 'Calibration: tap two points on the video to mark known object endpoints.';
+      refClicks = [];
+    };
+    captureRefBtn.onclick = ()=> { mmPerPixel = null; refClicks = []; knownMmInput.value=''; statusEl.textContent='Reference reset.'; }
+
+    canvas.addEventListener('click', (ev)=>{
+      if (!video.videoWidth) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = (ev.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (ev.clientY - rect.top) * (canvas.height / rect.height);
+      refClicks.push({x,y});
+      // draw small mark
+      ctx.fillStyle = 'yellow';
+      ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.fill();
+      if (refClicks.length === 2) {
+        const dx = refClicks[0].x - refClicks[1].x;
+        const dy = refClicks[0].y - refClicks[1].y;
+        const px = Math.hypot(dx,dy);
+        const knownMm = parseFloat(knownMmInput.value);
+        if (!knownMm || knownMm<=0) {
+          statusEl.textContent = 'Enter known mm (e.g. 85.6) before clicking two points.';
+          refClicks = [];
+          return;
+        }
+        mmPerPixel = knownMm / px;
+        statusEl.textContent = `Calibrated: ${mmPerPixel.toFixed(4)} mm/px`;
+      }
+    });
+
+    // utility: compute center of set of points
+    const centerOf = pts => {
+      const s = pts.reduce((a,p)=> {a.x+=p[0]; a.y+=p[1]; return a}, {x:0,y:0});
+      return {x: s.x/pts.length, y: s.y/pts.length};
+    };
+
+    // measurement loop
+    async function loop(){
+      if (!running) return;
+      if (video.readyState < 2) { requestAnimationFrame(loop); return; }
+      resizeCanvasToVideo();
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      const predictions = await model.estimateFaces({input: video, returnTensors:false, flipHorizontal: false, predictIrises: true});
+      if (predictions && predictions.length>0) {
+        const p = predictions[0];
+        // scaledMesh: array of [x,y,z] in pixels relative to video dimensions
+        const mesh = p.scaledMesh || [];
+        const annotations = p.annotations || {};
+
+        // silhouette: fallback to compute extremes if not present
+        const silhouette = annotations.silhouette || mesh.filter((_,i)=>false); // if missing, we'll use mesh extremes
+        const ptsForSil = (silhouette.length ? silhouette : mesh);
+
+        // compute bounding extremes
+        let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+        for (const pt of ptsForSil) {
+          const [x,y] = pt;
+          if (x<minX) minX=x;
+          if (x>maxX) maxX=x;
+          if (y<minY) minY=y;
+          if (y>maxY) maxY=y;
+        }
+        const headWidthPx = maxX - minX;
+        const headHeightPx = maxY - minY;
+
+        // interpupillary distance using iris or eye landmarks
+        let leftEyePts = annotations.leftEye || annotations.leftEyeUpper0 || [];
+        let rightEyePts = annotations.rightEye || annotations.rightEyeUpper0 || [];
+        let leftCenter = leftEyePts.length ? centerOf(leftEyePts) : null;
+        let rightCenter = rightEyePts.length ? centerOf(rightEyePts) : null;
+        if (!leftCenter && mesh.length) {
+          // fallback to known indices (approx): 33 (left), 263 (right) in MediaPipe mapping
+          leftCenter = {x: mesh[33][0], y: mesh[33][1]}; rightCenter = {x: mesh[263][0], y: mesh[263][1]};
+        }
+        const ipdPx = Math.hypot(leftCenter.x - rightCenter.x, leftCenter.y - rightCenter.y);
+
+        // face height: top-most to chin
+        const faceHeightPx = headHeightPx; // using silhouette extremes as approximate
+
+        // approximate head circumference from ellipse formula using semi-axes a,b
+        const a = headWidthPx/2;
+        const b = headHeightPx/2;
+        // Ramanujan approximation for ellipse circumference
+        const ellipseCircPx = Math.PI * (3*(a+b) - Math.sqrt((3*a + b)*(a + 3*b)));
+
+        // convert to mm if calibrated
+        const toMm = px => mmPerPixel ? px * mmPerPixel : null;
+
+        // draw overlay
+        if (drawOverlay) {
+          ctx.strokeStyle='lime'; ctx.lineWidth=2;
+          // silhouette polygon
+          if (ptsForSil.length){
+            ctx.beginPath();
+            ctx.moveTo(ptsForSil[0][0], ptsForSil[0][1]);
+            for (let i=1;i<ptsForSil.length;i++) ctx.lineTo(ptsForSil[i][0], ptsForSil[i][1]);
+            ctx.closePath(); ctx.stroke();
+          }
+          // eyes
+          ctx.fillStyle='cyan';
+          if (leftCenter) { ctx.beginPath(); ctx.arc(leftCenter.x,leftCenter.y,4,0,Math.PI*2); ctx.fill(); }
+          if (rightCenter) { ctx.beginPath(); ctx.arc(rightCenter.x,rightCenter.y,4,0,Math.PI*2); ctx.fill(); }
+          // bounding box
+          ctx.strokeStyle='yellow'; ctx.lineWidth=2;
+          ctx.strokeRect(minX,minY,headWidthPx,headHeightPx);
+        }
+
+        // fill metrics display
+        const lines = [];
+        if (mmPerPixel) {
+          lines.push(`IPD: ${ (toMm(ipdPx)).toFixed(1)} mm (${ipdPx.toFixed(1)} px)`);
+          lines.push(`Face width: ${ (toMm(headWidthPx)).toFixed(1)} mm (${headWidthPx.toFixed(1)} px)`);
+          lines.push(`Face height: ${ (toMm(faceHeightPx)).toFixed(1)} mm (${faceHeightPx.toFixed(1)} px)`);
+          lines.push(`Approx head circ: ${ (toMm(ellipseCircPx)).toFixed(1)} mm`);
+        } else {
+          lines.push(`IPD: ${ipdPx.toFixed(1)} px`);
+          lines.push(`Face width: ${headWidthPx.toFixed(1)} px`);
+          lines.push(`Face height: ${faceHeightPx.toFixed(1)} px`);
+          lines.push(`Approx head circ (px): ${ellipseCircPx.toFixed(1)}`);
+          lines.push('Calibrate with known object (credit card 85.6 mm) to convert px → mm.');
+        }
+        measurementsEl.innerHTML = lines.map(l=>`<div>${l}</div>`).join('');
+
+      } else {
+        statusEl.textContent = 'Face not detected';
+      }
+
+      requestAnimationFrame(loop);
+    }
+
+  })();
+  </script>
 </body>
 </html>
